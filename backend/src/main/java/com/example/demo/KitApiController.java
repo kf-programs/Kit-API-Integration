@@ -1,0 +1,199 @@
+package com.example.demo;
+
+import org.springframework.http.*;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.RestTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+/**
+ * KitApiController handles API requests related to Kit subscribers and tags.
+ */
+@RestController
+@RequestMapping("/api")
+public class KitApiController {
+    private static final Logger logger = LoggerFactory.getLogger(KitApiController.class);
+    private static final String KIT_API_BASE_URL = "https://api.kit.com/v4";
+
+    @PostMapping("/subscribers")
+    public ResponseEntity<?> getSubscribers(@RequestHeader("Kit-Api-Key") String apiKey) {
+        logger.info("Received API Key: {}", apiKey);
+
+        try {
+            // uses base URL to get initial 500 subscribers 
+            KitApiResponse kitResponse = fetchKitApiResponse(KIT_API_BASE_URL + "/subscribers", apiKey);
+            if (kitResponse == null || kitResponse.getSubscribers() == null || kitResponse.getSubscribers().isEmpty()) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("No subscribers found.");
+            }
+            logger.info("Successfully retrieved subscribers from Kit API");
+
+            // Extract emails and end cursor
+            List<String> emails = kitResponse.getSubscribers().stream()
+            .map(sub -> sub.getEmailAddress())
+            .collect(Collectors.toList());
+            String endCursor = kitResponse.getPagination().getEndCursor();
+            
+            // if an end cursor is present, continue fetching more subscribers (at current implementation,
+            // end_cursor is always present, even if it hit the final subscriber, but check null/empty to be safe)
+            int safetyCount = 8; // Safety count to prevent infinite loops
+            while (endCursor != null && !endCursor.isEmpty() && safetyCount > 0) {
+                safetyCount--;
+                logger.info("End cursor found: {}", endCursor);
+                Map<String, Object> result = new HashMap<>();
+                result = getNextPageSubscribers(apiKey, endCursor);
+                if (result == null || !result.containsKey("emails") || !result.containsKey("endCursor")) {
+                    logger.warn("No more subscribers found or invalid response structure.");
+                    break;
+                }
+                
+                logger.info("Safety {} Result {}", safetyCount, result);
+                emails.addAll((List<String>) result.get("emails"));
+                endCursor = (String) result.get("endCursor");
+            }
+            if (safetyCount == 0) {
+                logger.warn("Safety count reached zero, stopping pagination to prevent infinite loop.");
+            }
+            logger.info("Total subscribers fetched: {}", emails.size());
+            return ResponseEntity.ok(emails);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Error: " + e.getMessage());
+        }
+    }
+
+    private Map<String, Object> getNextPageSubscribers(String apiKey, String endCursor) {
+        logger.info("Fetching next page of subscribers with end cursor: {}", endCursor);
+
+        String kitApiUrl = KIT_API_BASE_URL + "/subscribers?after=" + endCursor;
+
+        KitApiResponse kitResponse = fetchKitApiResponse(kitApiUrl, apiKey);
+        if (kitResponse == null || kitResponse.getSubscribers() == null || kitResponse.getSubscribers().isEmpty()) {
+            return null;
+        }
+        logger.info("Successfully retrieved subscribers from Kit API");
+        // Extract emails and end cursor
+        List<String> emails = kitResponse.getSubscribers().stream()
+        .map(sub -> sub.getEmailAddress())
+        .collect(Collectors.toList());
+        String newEndCursor = kitResponse.getPagination().getEndCursor();
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("emails", emails);
+        result.put("endCursor", newEndCursor);
+        
+        return result;
+    }
+
+    private KitApiResponse fetchKitApiResponse(String kitApiUrl, String apiKey) {
+        RestTemplate restTemplate = new RestTemplate();
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Kit-Api-Key", apiKey);
+        HttpEntity<String> entity = new HttpEntity<>(headers);
+
+        ResponseEntity<KitApiResponse> response = restTemplate.exchange(
+            kitApiUrl,
+            HttpMethod.GET,
+            entity,
+            KitApiResponse.class
+        );
+
+        return response.getBody();
+    }
+
+    @GetMapping("/tags")
+    public ResponseEntity<?> getTags(@RequestHeader("Kit-Api-Key") String apiKey) {
+        logger.info("Fetching available tags");
+        try {
+            String tagsUrl = KIT_API_BASE_URL + "/tags";
+            RestTemplate restTemplate = new RestTemplate();
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Kit-Api-Key", apiKey);
+            HttpEntity<String> entity = new HttpEntity<>(headers);
+
+            ResponseEntity<TagsResponse> response = restTemplate.exchange(
+                tagsUrl,
+                HttpMethod.GET,
+                entity,
+                TagsResponse.class
+            );
+
+            return ResponseEntity.ok(response.getBody().getTags());
+        } catch (Exception e) {
+            logger.error("Error fetching tags: ", e);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Error: " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/tag-subscribers")
+    public ResponseEntity<?> tagSubscribers(
+            @RequestHeader("Kit-Api-Key") String apiKey,
+            @RequestBody TagSubscribersRequest request) {
+
+        logger.info("Tagging {} emails with tag: {}", 
+            request.getEmails().size(), request.getTagId());
+
+        RestTemplate restTemplate = new RestTemplate();
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Kit-Api-Key", apiKey);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        String tagUrl = KIT_API_BASE_URL + "/tags/" + request.getTagId() + "/subscribers";
+        Map<String, Integer> results = new HashMap<>();
+        results.put("success", 0);
+        results.put("alreadyTagged", 0);
+        results.put("failed", 0);
+
+        List<Map<String, Object>> emailDetails = new ArrayList<>();
+
+        for (String email : request.getEmails()) {
+            Map<String, Object> detail = new HashMap<>();
+            detail.put("email", email);
+            
+            try {
+                Map<String, String> requestBody = new HashMap<>();
+                requestBody.put("email_address", email);
+                HttpEntity<Map<String, String>> entity = new HttpEntity<>(requestBody, headers);
+
+                ResponseEntity<String> response = restTemplate.exchange(
+                    tagUrl,
+                    HttpMethod.POST,
+                    entity,
+                    String.class
+                );
+
+                detail.put("status", response.getStatusCode().value());
+                detail.put("result", response.getBody());
+                
+                if (response.getStatusCode() == HttpStatus.CREATED) {
+                    results.put("success", results.get("success") + 1);
+                } else if (response.getStatusCode() == HttpStatus.OK) {
+                    results.put("alreadyTagged", results.get("alreadyTagged") + 1);
+                }
+            } catch (Exception e) {
+                logger.error("Error tagging subscriber {}: {}", email, e.getMessage());
+                results.put("failed", results.get("failed") + 1);
+                detail.put("status", "ERROR");
+                detail.put("result", e.getMessage());
+            }
+            
+            emailDetails.add(detail);
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("message", String.format(
+            "Processing complete. Successfully tagged: %d, Already tagged: %d, Failed: %d",
+            results.get("success"),
+            results.get("alreadyTagged"),
+            results.get("failed")
+        ));
+        response.put("details", results);
+        response.put("emailDetails", emailDetails);
+
+        boolean hasErrors = results.get("failed") > 0;
+        return ResponseEntity
+            .status(hasErrors ? HttpStatus.PARTIAL_CONTENT : HttpStatus.OK)
+            .body(response);
+    }
+}

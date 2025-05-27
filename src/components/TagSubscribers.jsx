@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 
+{ /* This component allows users to tag subscribers with a specific tag using a CSV file upload 
+    * It fetches tags from the Kit API and allows users to select a tag and upload a CSV file - one column of email addresses.
+    * After processing, it displays a summary of the tagging operation and details for each email.
+    * 
+    * Importantly, unlike with the Kit web app, it will not add the email to the mailing list if the email is not found
+    */ }
 function TagSubscribers() {
   const [apiKey, setApiKey] = useState('');
   const [file, setFile] = useState(null);
@@ -15,6 +21,9 @@ function TagSubscribers() {
   const [summaryData, setSummaryData] = useState(null);
   const [emailDetailsData, setEmailDetailsData] = useState([]);
 
+  { /* Fetch tags when the component mounts or apiKey changes 
+    * Currently, the apiKey won't be set until the user inputs it, so this will only run after the first input.
+    */ }
   useEffect(() => {
     if (apiKey) {
       fetchTags();

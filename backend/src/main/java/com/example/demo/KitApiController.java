@@ -18,13 +18,17 @@ public class KitApiController {
     private static final Logger logger = LoggerFactory.getLogger(KitApiController.class);
     private static final String KIT_API_BASE_URL = "https://api.kit.com/v4";
 
+    /**
+     * Gets all the subscribers. Will make multiple calls to the Kit API
+     * if there are more than 500 subscribers, using pagination with end cursors.
+     */
     @PostMapping("/subscribers")
     public ResponseEntity<?> getSubscribers(@RequestHeader("Kit-Api-Key") String apiKey) {
-        logger.info("Received API Key: {}", apiKey);
-
+        logger.info("Fetching subscribers from Kit API");
+        
         try {
             // uses base URL to get initial 500 subscribers 
-            KitApiResponse kitResponse = fetchKitApiResponse(KIT_API_BASE_URL + "/subscribers", apiKey);
+            KitApiSubscribersResponse kitResponse = fetchKitApiSubscribersResponse(KIT_API_BASE_URL + "/subscribers", apiKey);
             if (kitResponse == null || kitResponse.getSubscribers() == null || kitResponse.getSubscribers().isEmpty()) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("No subscribers found.");
             }
@@ -63,16 +67,23 @@ public class KitApiController {
         }
     }
 
+    /**
+     * Uses the end cursor to fetch the next page of subscribers.
+     * This method is called recursively until there are no more pages to fetch or safety limit is reached.
+     * 
+     * returns a map containing the list of emails and the new end cursor, or null if no more subscribers are found.
+     */
     private Map<String, Object> getNextPageSubscribers(String apiKey, String endCursor) {
         logger.info("Fetching next page of subscribers with end cursor: {}", endCursor);
 
         String kitApiUrl = KIT_API_BASE_URL + "/subscribers?after=" + endCursor;
 
-        KitApiResponse kitResponse = fetchKitApiResponse(kitApiUrl, apiKey);
+        KitApiSubscribersResponse kitResponse = fetchKitApiSubscribersResponse(kitApiUrl, apiKey);
         if (kitResponse == null || kitResponse.getSubscribers() == null || kitResponse.getSubscribers().isEmpty()) {
             return null;
         }
         logger.info("Successfully retrieved subscribers from Kit API");
+
         // Extract emails and end cursor
         List<String> emails = kitResponse.getSubscribers().stream()
         .map(sub -> sub.getEmailAddress())
@@ -86,22 +97,25 @@ public class KitApiController {
         return result;
     }
 
-    private KitApiResponse fetchKitApiResponse(String kitApiUrl, String apiKey) {
+    private KitApiSubscribersResponse fetchKitApiSubscribersResponse(String kitApiUrl, String apiKey) {
         RestTemplate restTemplate = new RestTemplate();
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Kit-Api-Key", apiKey);
         HttpEntity<String> entity = new HttpEntity<>(headers);
 
-        ResponseEntity<KitApiResponse> response = restTemplate.exchange(
+        ResponseEntity<KitApiSubscribersResponse> response = restTemplate.exchange(
             kitApiUrl,
             HttpMethod.GET,
             entity,
-            KitApiResponse.class
+            KitApiSubscribersResponse.class
         );
 
         return response.getBody();
     }
 
+    /**
+     * Fetches all available tags for the account linked to the Kit API key.
+     */
     @GetMapping("/tags")
     public ResponseEntity<?> getTags(@RequestHeader("Kit-Api-Key") String apiKey) {
         logger.info("Fetching available tags");
@@ -112,11 +126,11 @@ public class KitApiController {
             headers.set("X-Kit-Api-Key", apiKey);
             HttpEntity<String> entity = new HttpEntity<>(headers);
 
-            ResponseEntity<TagsResponse> response = restTemplate.exchange(
+            ResponseEntity<KitApiTagsResponse> response = restTemplate.exchange(
                 tagsUrl,
                 HttpMethod.GET,
                 entity,
-                TagsResponse.class
+                KitApiTagsResponse.class
             );
 
             return ResponseEntity.ok(response.getBody().getTags());
@@ -126,6 +140,12 @@ public class KitApiController {
         }
     }
 
+    /**
+     * Tags subscribers with a specific tag ID.
+     * Accepts a list of email addresses and a tag ID, and attempts to tag each subscriber.
+     * Makes a separate API call for each email address cause Kit's bulk tagging requires subscriber IDs,
+     * which are not provided in the initial subscriber fetch.
+     */
     @PostMapping("/tag-subscribers")
     public ResponseEntity<?> tagSubscribers(
             @RequestHeader("Kit-Api-Key") String apiKey,
@@ -140,13 +160,18 @@ public class KitApiController {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         String tagUrl = KIT_API_BASE_URL + "/tags/" + request.getTagId() + "/subscribers";
+
+        // Initialize results map to track success, already tagged, and failed counts
         Map<String, Integer> results = new HashMap<>();
         results.put("success", 0);
         results.put("alreadyTagged", 0);
         results.put("failed", 0);
 
+        // Initialize a list to hold details of each email processed. Each detail will include the email address,
+        // http status, and result, which is either the response body on success, or error message.
         List<Map<String, Object>> emailDetails = new ArrayList<>();
 
+        // Iterate over each email and attempt to tag it, calling the Kit API for each
         for (String email : request.getEmails()) {
             Map<String, Object> detail = new HashMap<>();
             detail.put("email", email);
@@ -173,9 +198,10 @@ public class KitApiController {
                 }
             } catch (Exception e) {
                 logger.error("Error tagging subscriber {}: {}", email, e.getMessage());
-                results.put("failed", results.get("failed") + 1);
                 detail.put("status", "ERROR");
                 detail.put("result", e.getMessage());
+                
+                results.put("failed", results.get("failed") + 1);
             }
             
             emailDetails.add(detail);

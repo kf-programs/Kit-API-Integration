@@ -2,6 +2,10 @@ package com.example.demo;
 
 import java.util.List;
 
+/**
+ * The request sent from the frontend to the backend
+ * to tag subscribers with a specific tag.
+ */
 public class TagSubscribersRequest {
     private List<String> emails;
     private String tagId;

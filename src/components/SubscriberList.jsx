@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import axios from 'axios';
 
+{ /* This component fetches and displays a list of subscribers from the Kit API */ }
 function SubscriberList() {
   const [apiKey, setApiKey] = useState('');
   const [subscribers, setSubscribers] = useState([]);
@@ -25,6 +26,10 @@ function SubscriberList() {
     }
   };
 
+  { /* Render the component 
+    * This includes an input for the API key, a button to fetch subscribers,
+    * and a table to display the list of subscribers.
+    */ }
   return (
     <div>
       <h1>Kit API Subscriber List</h1>

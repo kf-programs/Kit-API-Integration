@@ -2,7 +2,7 @@ package com.example.demo;
 
 import java.util.List;
 
-public class TagsResponse {
+public class KitApiTagsResponse {
     private List<Tag> tags;
 
     public static class Tag {

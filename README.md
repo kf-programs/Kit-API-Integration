@@ -8,15 +8,15 @@ The main use case for this app was to supply a list of emails to Kit, tag them i
 The app asks the user to supply the API key rather pulling a stored key. By asking for a key, this application becomes scalable, allowing for the management of multiple Kit accounts.
 
 ## Technology 
-frontend = React.js
+frontend = React.js  
 backend = Java and Springboot
 
 ## Local deployment
-To start frontend:
-from src folder: 
-npm install (if necessary)
-npm run dev
-
-To start backend:
-from backend folder: 
-./gradlew bootRun
+To start frontend:  
+from src folder:  
+npm install (if necessary)  
+npm run dev  
+  
+To start backend:  
+from backend folder:  
+./gradlew bootRun  

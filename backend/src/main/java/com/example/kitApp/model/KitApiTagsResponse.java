@@ -1,4 +1,4 @@
-package com.example.demo;
+package com.example.kitApp.model;
 
 import java.util.List;
 

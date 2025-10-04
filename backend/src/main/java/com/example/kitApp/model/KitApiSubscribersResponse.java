@@ -1,11 +1,31 @@
 package com.example.kitApp.model;
 
+import java.util.Collections;
 import java.util.List;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.util.stream.Collectors;
 
 public class KitApiSubscribersResponse {
     private List<Subscriber> subscribers;
     private Pagination pagination;
+
+    
+    public KitApiSubscribersResponse(List<String> emailAddresses, String endCursor) {
+        this.subscribers = emailAddresses.stream()
+            .map(email -> {
+                Subscriber subscriber = new Subscriber();
+                subscriber.emailAddress = email;
+                return subscriber;
+            })
+            .collect(Collectors.toList());
+            
+        Pagination pagination = new Pagination();
+        pagination.endCursor = endCursor;
+        this.pagination = pagination;
+    }
+
+    // Add default constructor to maintain existing functionality
+    public KitApiSubscribersResponse() {}
 
     public static class Subscriber {
         @JsonProperty("email_address")
@@ -27,6 +47,20 @@ public class KitApiSubscribersResponse {
         }
     }
 
+    public List<String> getSubscriberEmailAddresses() {
+        if (subscribers == null || subscribers.isEmpty()) {
+            return Collections.emptyList();
+        }
+        
+        return subscribers.stream()
+            .map(Subscriber::getEmailAddress)
+            .collect(Collectors.toList());
+    }
+
+    public String getEndCursor() {
+        return pagination.getEndCursor();
+    }
+
     public List<Subscriber> getSubscribers() {
         return subscribers;
     }
@@ -34,4 +68,12 @@ public class KitApiSubscribersResponse {
     public Pagination getPagination() {
         return pagination;
     }
+
+    public void setSubscribers(List<Subscriber> subscribers) {
+        this.subscribers = subscribers;
+    }
+    public void setPagination(Pagination pagination) {
+        this.pagination = pagination;
+    }
+
 }

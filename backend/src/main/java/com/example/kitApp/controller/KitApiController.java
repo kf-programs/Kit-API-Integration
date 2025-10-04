@@ -7,6 +7,7 @@ import org.springframework.web.client.RestTemplate;
 import com.example.kitApp.model.KitApiSubscribersResponse;
 import com.example.kitApp.model.KitApiTagsResponse;
 import com.example.kitApp.model.TagSubscribersRequest;
+import com.example.kitApp.service.KitApiService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,29 +22,36 @@ import java.util.stream.Collectors;
 @RequestMapping("/api")
 public class KitApiController {
     private static final Logger logger = LoggerFactory.getLogger(KitApiController.class);
-    private static final String KIT_API_BASE_URL = "https://api.kit.com/v4";
+    
+    private final KitApiService kitApiService;
+
+    public KitApiController(KitApiService kitApiService) {
+        this.kitApiService = kitApiService;
+    }
 
     /**
      * Gets all the subscribers. Will make multiple calls to the Kit API
      * if there are more than 500 subscribers, using pagination with end cursors.
      */
     @PostMapping("/subscribers")
-    public ResponseEntity<?> getSubscribers(@RequestHeader("Kit-Api-Key") String apiKey) {
+    public ResponseEntity<?> getSubscribers() {
         logger.info("Fetching subscribers from Kit API");
         
         try {
-            // uses base URL to get initial 500 subscribers 
-            KitApiSubscribersResponse kitResponse = fetchKitApiSubscribersResponse(KIT_API_BASE_URL + "/subscribers", apiKey);
-            if (kitResponse == null || kitResponse.getSubscribers() == null || kitResponse.getSubscribers().isEmpty()) {
+            KitApiSubscribersResponse kitResponse = kitApiService.fetchSubscribers(null);
+            logger.info("Response: {}", kitResponse);
+            if (kitResponse == null) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("No response from Kit API.");
+            }
+            List<String> emails = kitResponse.getSubscriberEmailAddresses();
+
+            if (emails == null) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("No subscribers found.");
             }
             logger.info("Successfully retrieved subscribers from Kit API");
 
             // Extract emails and end cursor
-            List<String> emails = kitResponse.getSubscribers().stream()
-            .map(sub -> sub.getEmailAddress())
-            .collect(Collectors.toList());
-            String endCursor = kitResponse.getPagination().getEndCursor();
+            String endCursor = kitResponse.getEndCursor();
             
             // if an end cursor is present, continue fetching more subscribers (at current implementation,
             // end_cursor is always present, even if it hit the final subscriber, but check null/empty to be safe)
@@ -52,7 +60,7 @@ public class KitApiController {
                 safetyCount--;
                 logger.info("End cursor found: {}", endCursor);
                 Map<String, Object> result = new HashMap<>();
-                result = getNextPageSubscribers(apiKey, endCursor);
+                result = getNextPageSubscribers(endCursor);
                 if (result == null || !result.containsKey("emails") || !result.containsKey("endCursor")) {
                     logger.warn("No more subscribers found or invalid response structure.");
                     break;
@@ -78,12 +86,10 @@ public class KitApiController {
      * 
      * returns a map containing the list of emails and the new end cursor, or null if no more subscribers are found.
      */
-    private Map<String, Object> getNextPageSubscribers(String apiKey, String endCursor) {
+    private Map<String, Object> getNextPageSubscribers(String endCursor) {
         logger.info("Fetching next page of subscribers with end cursor: {}", endCursor);
 
-        String kitApiUrl = KIT_API_BASE_URL + "/subscribers?after=" + endCursor;
-
-        KitApiSubscribersResponse kitResponse = fetchKitApiSubscribersResponse(kitApiUrl, apiKey);
+        KitApiSubscribersResponse kitResponse = kitApiService.fetchSubscribers(endCursor);
         if (kitResponse == null || kitResponse.getSubscribers() == null || kitResponse.getSubscribers().isEmpty()) {
             return null;
         }
@@ -102,43 +108,15 @@ public class KitApiController {
         return result;
     }
 
-    private KitApiSubscribersResponse fetchKitApiSubscribersResponse(String kitApiUrl, String apiKey) {
-        RestTemplate restTemplate = new RestTemplate();
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("X-Kit-Api-Key", apiKey);
-        HttpEntity<String> entity = new HttpEntity<>(headers);
-
-        ResponseEntity<KitApiSubscribersResponse> response = restTemplate.exchange(
-            kitApiUrl,
-            HttpMethod.GET,
-            entity,
-            KitApiSubscribersResponse.class
-        );
-
-        return response.getBody();
-    }
-
     /**
      * Fetches all available tags for the account linked to the Kit API key.
      */
     @GetMapping("/tags")
-    public ResponseEntity<?> getTags(@RequestHeader("Kit-Api-Key") String apiKey) {
+    public ResponseEntity<?> getTags() {
         logger.info("Fetching available tags");
         try {
-            String tagsUrl = KIT_API_BASE_URL + "/tags";
-            RestTemplate restTemplate = new RestTemplate();
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("X-Kit-Api-Key", apiKey);
-            HttpEntity<String> entity = new HttpEntity<>(headers);
-
-            ResponseEntity<KitApiTagsResponse> response = restTemplate.exchange(
-                tagsUrl,
-                HttpMethod.GET,
-                entity,
-                KitApiTagsResponse.class
-            );
-
-            return ResponseEntity.ok(response.getBody().getTags());
+            KitApiTagsResponse response = kitApiService.fetchTags();
+            return ResponseEntity.ok(response.getTags());
         } catch (Exception e) {
             logger.error("Error fetching tags: ", e);
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Error: " + e.getMessage());
@@ -152,19 +130,10 @@ public class KitApiController {
      * which are not provided in the initial subscriber fetch.
      */
     @PostMapping("/tag-subscribers")
-    public ResponseEntity<?> tagSubscribers(
-            @RequestHeader("Kit-Api-Key") String apiKey,
-            @RequestBody TagSubscribersRequest request) {
+    public ResponseEntity<?> tagSubscribers(@RequestBody TagSubscribersRequest request) {
 
         logger.info("Tagging {} emails with tag: {}", 
             request.getEmails().size(), request.getTagId());
-
-        RestTemplate restTemplate = new RestTemplate();
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("X-Kit-Api-Key", apiKey);
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        String tagUrl = KIT_API_BASE_URL + "/tags/" + request.getTagId() + "/subscribers";
 
         // Initialize results map to track success, already tagged, and failed counts
         Map<String, Integer> results = new HashMap<>();
@@ -182,17 +151,7 @@ public class KitApiController {
             detail.put("email", email);
             
             try {
-                Map<String, String> requestBody = new HashMap<>();
-                requestBody.put("email_address", email);
-                HttpEntity<Map<String, String>> entity = new HttpEntity<>(requestBody, headers);
-
-                ResponseEntity<String> response = restTemplate.exchange(
-                    tagUrl,
-                    HttpMethod.POST,
-                    entity,
-                    String.class
-                );
-
+                ResponseEntity<String> response = kitApiService.tagSubscriber(request.getTagId(), email);
                 detail.put("status", response.getStatusCode().value());
                 detail.put("result", response.getBody());
                 

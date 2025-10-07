@@ -2,7 +2,6 @@ package com.example.kitApp.controller;
 
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.client.RestTemplate;
 
 import com.example.kitApp.model.KitApiSubscribersResponse;
 import com.example.kitApp.model.KitApiTagsResponse;
@@ -45,7 +44,7 @@ public class KitApiController {
             }
             List<String> emails = kitResponse.getSubscriberEmailAddresses();
 
-            if (emails == null) {
+            if (emails.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("No subscribers found.");
             }
             logger.info("Successfully retrieved subscribers from Kit API");
@@ -55,7 +54,7 @@ public class KitApiController {
             
             // if an end cursor is present, continue fetching more subscribers (at current implementation,
             // end_cursor is always present, even if it hit the final subscriber, but check null/empty to be safe)
-            int safetyCount = 8; // Safety count to prevent infinite loops
+            int safetyCount = 8; // Safety count to prevent infinite loops TODO
             while (endCursor != null && !endCursor.isEmpty() && safetyCount > 0) {
                 safetyCount--;
                 logger.info("End cursor found: {}", endCursor);
